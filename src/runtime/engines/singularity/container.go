@@ -17,6 +17,7 @@ import (
 	"github.com/singularityware/singularity/src/pkg/buildcfg"
 	"github.com/singularityware/singularity/src/pkg/image"
 	"github.com/singularityware/singularity/src/pkg/sylog"
+	"github.com/singularityware/singularity/src/pkg/syplugin"
 	"github.com/singularityware/singularity/src/pkg/util/fs"
 	"github.com/singularityware/singularity/src/pkg/util/fs/files"
 	"github.com/singularityware/singularity/src/pkg/util/fs/layout"
@@ -65,6 +66,14 @@ func create(engine *EngineOperations, rpcOps *client.RPC) error {
 			}
 		}
 	}
+
+	sylog.Debugf("Load plugins")
+	if err := syplugin.Load("mount.so"); err != nil {
+		sylog.Debugf("Error calling plugin load\n")
+	}
+
+	pq, err := syplugin.GetByName("mount.so")
+	sylog.Debugf("plugin GetByName %v\n", pq)
 
 	p := &mount.Points{}
 	system := &mount.System{Points: p, Mount: c.mount}
