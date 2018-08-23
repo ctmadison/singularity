@@ -19,10 +19,25 @@ const MainSymbolName = "SyPlugin"
 // registeredPlugins contains a map of name -> GenericInitializer objects
 var registeredPlugins map[string]GenericInitializer
 
+var registeredMountPlugins map[string]GenericMount
+var registeredBindPlugins map[string]GenericBind
+
 // GenericInitializer is an interface that all plugins MUST satisfy. This is where
 // any plugin specific initialization code will be called.
 type GenericInitializer interface {
 	Init()
+}
+
+// GenericMount is an interface that all mount plugins MUST satisfy. This is where
+// any plugin specific mount code will be called.
+type GenericMount interface {
+	Mount()
+}
+
+// GenericBind is an interface that all mount plugins MUST satisfy. This is where
+// any plugin specific bind code will be called.
+type GenericBind interface {
+	Bind()
 }
 
 // Symbol foo
@@ -33,8 +48,8 @@ var splgInit Symbol
 
 // Load will open the plugin specified by path relative to the plugin directory. Plugins
 // are by default stored at buildcfg.SLIBDIR (LIBEXECDIR + "/singularity/lib")
-func Load(path string) error {
-	abspath := filepath.Join(buildcfg.LIBEXECDIR, "/singularity/lib/plugins", path)
+func Load(abspath string) error {
+	// abspath := filepath.Join(buildcfg.LIBEXECDIR, "/singularity/lib/plugins", path)
 	sylog.Debugf("Load: plugin abspath: %v\n", abspath)
 
 	return load(abspath)
@@ -60,32 +75,30 @@ func load(abspath string) error {
 	if !ok {
 		sylog.Debugf("symbol %v of plugin %v does not satisfy GenericInitializer", MainSymbolName, abspath)
 		return fmt.Errorf("symbol %v of plugin %v does not satisfy GenericInitializer", MainSymbolName, abspath)
+	} else {
+		sylog.Debugf("symbol %v of plugin %v does satisfy GenericInitializer", MainSymbolName, abspath)
+		registeredPlugins[abspath] = initializer
+		registeredPlugins[abspath].Init()
 	}
-	// sylog.Debugf("symbol %v of plugin %v does satisfy GenericInitializer", MainSymbolName, abspath)
 
-	// test
-	// splgInit, err := p.Lookup("Init")
-	// if err != nil {
-	// 	sylog.Debugf("plugin %v lookup: %v error\n", abspath, mainSymbol)
-	// }
-	// sylog.Debugf("after plugin %v lookup: %v\n", abspath, mainSymbol)
+	mount, ok := mainSymbol.(GenericMount)
+	if !ok {
+		sylog.Debugf("symbol %v of plugin %v does not satisfy GenericMount", MainSymbolName, abspath)
+	} else {
+		sylog.Debugf("symbol %v of plugin %v does satisfy GenericMount", MainSymbolName, abspath)
+		registeredMountPlugins[abspath] = mount
+		registeredMountPlugins[abspath].Mount() // test
+	}
 
-	// plgInit, ok := splgInit.(GenericInitializer)
-	// if !ok {
-	// 	sylog.Debugf("Plugin has no 'Init' function")
-	// }
-	// sylog.Debugf("after plugin %v Init() check\n", abspath)
+	bind, ok := mainSymbol.(GenericBind)
+	if !ok {
+		sylog.Debugf("symbol %v of plugin %v does not satisfy GenericBind", MainSymbolName, abspath)
+	} else {
+		sylog.Debugf("symbol %v of plugin %v does satisfy GenericBind", MainSymbolName, abspath)
+		registeredBindPlugins[abspath] = bind
+		registeredBindPlugins[abspath].Bind() // test
+	}
 
-	// plgInit.Init()
-	// if err != nil {
-	// 	sylog.Debugf("plugin %v Init() error: %v\n", abspath, err)
-	// }
-	// sylog.Debugf("after plugin %v Init(): %v\n", abspath, plgInit)
-
-	//	mainSymbol.Init()
-
-	registeredPlugins[abspath] = initializer
-	registeredPlugins[abspath].Init()
 	return nil
 }
 
@@ -106,5 +119,7 @@ func getByName(abspath string) (GenericInitializer, error) {
 
 func init() {
 	registeredPlugins = make(map[string]GenericInitializer)
+	registeredMountPlugins = make(map[string]GenericMount)
+	registeredBindPlugins = make(map[string]GenericBind)
 	// sylog.Debugf("syplugin init \n")
 }

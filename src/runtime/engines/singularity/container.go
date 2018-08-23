@@ -67,9 +67,19 @@ func create(engine *EngineOperations, rpcOps *client.RPC) error {
 		}
 	}
 
-	sylog.Debugf("Load plugins")
-	if err := syplugin.Load("mount.so"); err != nil {
-		sylog.Debugf("Error calling plugin load\n")
+	abspath := filepath.Join(buildcfg.LIBEXECDIR, "/singularity/lib/plugins")
+	sylog.Debugf("Load: Searching plugin abspath: %v\n", abspath)
+
+	allPlugins, err := filepath.Glob(abspath + "/*.so")
+	if err != nil {
+		sylog.Debugf("No plugins found\n")
+	} else {
+		for _, filename := range allPlugins {
+			sylog.Debugf("Load plugin %v\n", filename)
+			if err := syplugin.Load(filename); err != nil {
+				sylog.Debugf("Error calling plugin load\n")
+			}
+		}
 	}
 
 	pq, err := syplugin.GetByName("mount.so")
