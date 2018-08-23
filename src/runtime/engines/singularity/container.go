@@ -82,9 +82,6 @@ func create(engine *EngineOperations, rpcOps *client.RPC) error {
 		}
 	}
 
-	pq, err := syplugin.GetByName("mount.so")
-	sylog.Debugf("plugin GetByName %v\n", pq)
-
 	p := &mount.Points{}
 	system := &mount.System{Points: p, Mount: c.mount}
 
