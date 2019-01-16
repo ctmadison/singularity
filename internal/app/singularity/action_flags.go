@@ -1,4 +1,4 @@
-// Copyright (c) 2018, Sylabs Inc. All rights reserved.
+// Copyright (c) 2019, Sylabs Inc. All rights reserved.
 // This software is licensed under a 3-clause BSD license. Please consult the
 // LICENSE.md file distributed with the sources of this project regarding your
 // rights to use or distribute this software.
@@ -8,8 +8,10 @@ package cli
 import (
 	"log"
 	"os"
+	"runtime"
 
 	"github.com/spf13/pflag"
+	"github.com/sylabs/singularity/internal/pkg/sylog"
 	"github.com/sylabs/singularity/internal/pkg/util/user"
 )
 
@@ -42,6 +44,7 @@ var (
 	NoHome          bool
 	NoInit          bool
 	NoNvidia        bool
+	Vm              bool
 
 	NetNamespace  bool
 	UtsNamespace  bool
@@ -167,6 +170,8 @@ func initPathVars() {
 
 // initBoolVars initializes flags that take a boolean argument
 func initBoolVars() {
+	const GOOS string = runtime.GOOS
+
 	// --boot
 	actionFlags.BoolVar(&IsBoot, "boot", false, "execute /sbin/init to boot container (root only)")
 	actionFlags.SetAnnotation("boot", "envkey", []string{"BOOT"})
@@ -191,6 +196,15 @@ func initBoolVars() {
 	// --nv
 	actionFlags.BoolVar(&Nvidia, "nv", false, "enable experimental Nvidia support")
 	actionFlags.SetAnnotation("nv", "envkey", []string{"NV"})
+
+	// --vm
+	if GOOS == "darwin" {
+		actionFlags.BoolVar(&Vm, "vm", true, "enable VM support")
+		sylog.Infof("VM support auto-enabled, OS=%s", GOOS)
+	} else {
+		actionFlags.BoolVar(&Vm, "vm", false, "enable VM support")
+	}
+	actionFlags.SetAnnotation("vm", "envkey", []string{"VM"})
 
 	// -w|--writable
 	actionFlags.BoolVarP(&IsWritable, "writable", "w", false, "by default all Singularity containers are available as read only. This option makes the file system accessible as read/write.")

@@ -1,17 +1,20 @@
-// Copyright (c) 2018, Sylabs Inc. All rights reserved.
+// Copyright (c) 2019, Sylabs Inc. All rights reserved.
 // This software is licensed under a 3-clause BSD license. Please consult the
 // LICENSE.md file distributed with the sources of this project regarding your
 // rights to use or distribute this software.
 
-// +build singularity_runtime
-
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -43,6 +46,8 @@ import (
 )
 
 func init() {
+	const GOOS string = runtime.GOOS
+
 	actionCmds := []*cobra.Command{
 		ExecCmd,
 		ShellCmd,
@@ -64,6 +69,7 @@ func init() {
 		cmd.Flags().AddFlag(actionFlags.Lookup("network-args"))
 		cmd.Flags().AddFlag(actionFlags.Lookup("dns"))
 		cmd.Flags().AddFlag(actionFlags.Lookup("nv"))
+		cmd.Flags().AddFlag(actionFlags.Lookup("vm"))
 		cmd.Flags().AddFlag(actionFlags.Lookup("overlay"))
 		cmd.Flags().AddFlag(actionFlags.Lookup("pid"))
 		cmd.Flags().AddFlag(actionFlags.Lookup("uts"))
@@ -366,8 +372,8 @@ func execStarter(cobraCmd *cobra.Command, image string, args []string, name stri
 		}
 		generator.AddProcessEnv("SINGULARITY_CONTAINER", file.Image)
 		generator.AddProcessEnv("SINGULARITY_NAME", filepath.Base(file.Image))
-		engineConfig.SetImage(image)
-		engineConfig.SetInstanceJoin(true)
+		//engineConfig.SetImage(image)
+		//engineConfig.SetInstanceJoin(true)
 	} else {
 		abspath, err := filepath.Abs(image)
 		generator.AddProcessEnv("SINGULARITY_CONTAINER", abspath)
@@ -375,7 +381,7 @@ func execStarter(cobraCmd *cobra.Command, image string, args []string, name stri
 		if err != nil {
 			sylog.Fatalf("Failed to determine image absolute path for %s: %s", image, err)
 		}
-		engineConfig.SetImage(abspath)
+		//engineConfig.SetImage(abspath)
 	}
 
 	if !NoNvidia && (Nvidia || engineConfig.File.AlwaysUseNv) {
@@ -606,49 +612,126 @@ func execStarter(cobraCmd *cobra.Command, image string, args []string, name stri
 		sylog.Fatalf("CLI Failed to marshal CommonEngineConfig: %s\n", err)
 	}
 
-	if engineConfig.GetInstance() {
-		stdout, stderr, err := instance.SetLogFile(name, int(uid))
-		if err != nil {
-			sylog.Fatalf("failed to create instance log files: %s", err)
+	if Vm {
+		// SIF image we are running
+		sifImage := engineConfig.GetImage()
+
+		fmt.Println("SIF Image: " + sifImage)
+		cliExtra := ""
+		fmt.Println("Image Base: " + filepath.Base(sifImage))
+		imgPath := strings.Split(sifImage, ":")
+		isInternal := false
+		if strings.HasPrefix("internal", filepath.Base(imgPath[0])) {
+			fmt.Println("FMT: 'cliExtra = syos'")
+			cliExtra = "syos"
+			isInternal = true
+		} else {
+			// TODO: Fix me -- There should be something that has the arguments already...
+			// We also want a built in way to get the main action (exec, run, shell, etc...)
+			cliExtra = strings.Join(os.Args[4:], " ")
+		}
+		appendArgs := fmt.Sprintf("root=/dev/ram0 console=ttyS0 quiet singularity_action=%s singularity_arguments=\"%s\"", os.Args[1], cliExtra)
+
+		//defargs := []string{"-cpu", "host", "-enable-kvm", "-device", "virtio-rng-pci", "-realtime", "mlock=on", "-display", "vnc", "-hda", os.Args[3], "-serial", "stdio", "-kernel", "/home/jstover/syos/bzImage", "-initrd", "/home/jstover/syos/initramfs.gz", "-m", "4096", os.Args[4], os.Args[5]}
+		defargs := []string{""}
+		if cliExtra == "syos" && isInternal {
+			fmt.Println("defargs - without -hda")
+			defargs = []string{"-cpu", "host", "-enable-kvm", "-device", "virtio-rng-pci", "-display", "none", "-realtime", "mlock=on", "-serial", "stdio", "-kernel", buildcfg.LIBEXECDIR + "/singularity/vm/syos-kernel-amd64", "-initrd", buildcfg.LIBEXECDIR + "/singularity/vm/initramfs_amd64.gz", "-m", "4096", "-append", appendArgs}
+		} else {
+			fmt.Println("defargs - with -hda")
+			defargs = []string{"-cpu", "host", "-enable-kvm", "-device", "virtio-rng-pci", "-display", "none", "-realtime", "mlock=on", "-hda", sifImage, "-serial", "stdio", "-kernel", buildcfg.LIBEXECDIR + "/singularity/vm/syos-kernel-amd64", "-initrd", buildcfg.LIBEXECDIR + "/singularity/vm/initramfs_amd64.gz", "-m", "4096", "-append", appendArgs}
 		}
 
-		start, err := stderr.Seek(0, os.SEEK_END)
-		if err != nil {
-			sylog.Warningf("failed to get standard error stream offset: %s", err)
+		if err := doVm(args[0]); err != nil {
+			sylog.Errorf("VM instance failed: %s", err)
+			os.Exit(2)
 		}
+	} else {
+		if engineConfig.GetInstance() {
+			stdout, stderr, err := instance.SetLogFile(name, int(uid))
+			if err != nil {
+				sylog.Fatalf("failed to create instance log files: %s", err)
+			}
 
-		cmd, err := exec.PipeCommand(starter, []string{procname}, Env, configData)
-		cmd.Stdout = stdout
-		cmd.Stderr = stderr
-
-		cmdErr := cmd.Run()
-
-		if sylog.GetLevel() != 0 {
-			// starter can exit a bit before all errors has been reported
-			// by instance process, wait a bit to catch all errors
-			time.Sleep(100 * time.Millisecond)
-
-			end, err := stderr.Seek(0, os.SEEK_END)
+			start, err := stderr.Seek(0, os.SEEK_END)
 			if err != nil {
 				sylog.Warningf("failed to get standard error stream offset: %s", err)
 			}
-			if end-start > 0 {
-				output := make([]byte, end-start)
-				stderr.ReadAt(output, start)
-				fmt.Println(string(output))
+
+			cmd, err := exec.PipeCommand(starter, []string{procname}, Env, configData)
+			cmd.Stdout = stdout
+			cmd.Stderr = stderr
+
+			cmdErr := cmd.Run()
+
+			if sylog.GetLevel() != 0 {
+				// starter can exit a bit before all errors has been reported
+				// by instance process, wait a bit to catch all errors
+				time.Sleep(100 * time.Millisecond)
+
+				end, err := stderr.Seek(0, os.SEEK_END)
+				if err != nil {
+					sylog.Warningf("failed to get standard error stream offset: %s", err)
+				}
+				if end-start > 0 {
+					output := make([]byte, end-start)
+					stderr.ReadAt(output, start)
+					fmt.Println(string(output))
+				}
+			}
+
+			if cmdErr != nil {
+				sylog.Fatalf("failed to start instance: %s", cmdErr)
+			} else {
+				sylog.Verbosef("you will find instance output here: %s", stdout.Name())
+				sylog.Verbosef("you will find instance error here: %s", stderr.Name())
+				sylog.Infof("instance started successfully")
+			}
+		} else {
+			if err := exec.Pipe(starter, []string{procname}, Env, configData); err != nil {
+				sylog.Fatalf("%s", err)
 			}
 		}
-
-		if cmdErr != nil {
-			sylog.Fatalf("failed to start instance: %s", cmdErr)
-		} else {
-			sylog.Verbosef("you will find instance output here: %s", stdout.Name())
-			sylog.Verbosef("you will find instance error here: %s", stderr.Name())
-			sylog.Infof("instance started successfully")
-		}
-	} else {
-		if err := exec.Pipe(starter, []string{procname}, Env, configData); err != nil {
-			sylog.Fatalf("%s", err)
-		}
 	}
+}
+
+func doVm(cpath string) error {
+	defargs := []string{"-cpu", "host", "-enable-kvm", "-device", "virtio-rng-pci", "-realtime", "mlock=on", "-display", "none", "-hda", os.Args[3], "-serial", "stdio", "-kernel", "/home/cmadison/syos/bzImage", "-initrd", "/home/cmadison/syos/initramfs.gz", "-m", "8192", os.Args[4], os.Args[5]}
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+
+	pgmexec, lookErr := osexec.LookPath("/usr/libexec/qemu-kvm")
+	if lookErr != nil {
+		panic(lookErr)
+	}
+
+	cmd := osexec.Command(pgmexec, defargs...)
+	cmd.Env = os.Environ()
+	cmd.Stdin = os.Stdin
+
+	stdoutIn, _ := cmd.StdoutPipe()
+	stderrIn, _ := cmd.StderrPipe()
+
+	var errStdout, errStderr error
+	stdout := io.MultiWriter(os.Stdout, &stdoutBuf)
+	stderr := io.MultiWriter(os.Stderr, &stderrBuf)
+
+	cmdErr := cmd.Run()
+	if cmdErr != nil {
+		//log.Infof("cmd.Start() failed with '%s'\n", cmdErr)
+	}
+
+	go func() {
+		_, errStdout = io.Copy(stdout, stdoutIn)
+	}()
+
+	go func() {
+		_, errStderr = io.Copy(stderr, stderrIn)
+	}()
+
+	if errStdout != nil || errStderr != nil {
+		log.Fatal("failed to capture stdout or stderr\n")
+	}
+
+	return nil
 }

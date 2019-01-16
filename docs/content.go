@@ -630,6 +630,7 @@ Enterprise Performance Computing (EPC)`
   signature verification is done for all those blocks.`
 	VerifyExample string = `
   $ singularity verify container.sif`
+
 	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	// Run-help
 	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
