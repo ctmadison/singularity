@@ -16,6 +16,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -695,10 +696,14 @@ func doVm(sifImage, singAction, cliExtra string) error {
 
 	hdString := fmt.Sprintf("2:0,ahci-hd,%s", sifImage)
 
-	kexecArgs := fmt.Sprintf("kexec,/Users/carlmadison/xhyve/syos/bzImage_latest,/Users/carlmadison/xhyve/syos/initramfs_latest.gz,console=ttyS0 quiet root=/dev/ram0 singularity_action=%s singularity_arguments=\"%s\"", singAction, cliExtra)
-	//fmt.Println("kexecArgs=", kexecArgs)
+	bzImage := fmt.Sprintf(buildcfg.LIBEXECDIR+"%s"+runtime.GOARCH, "/singularity/vm/syos-kernel-")
+	initramfs := fmt.Sprintf(buildcfg.LIBEXECDIR+"%s"+runtime.GOARCH+".gz", "/singularity/vm/initramfs_")
+	kexecArgs := fmt.Sprintf("kexec,%s,%s,console=ttyS0 quiet root=/dev/ram0 singularity_action=%s singularity_arguments=\"%s\"", bzImage, initramfs, singAction, cliExtra)
 
+	//kexecArgs := fmt.Sprintf("kexec,/Users/carlmadison/xhyve/syos/bzImage_latest,/Users/carlmadison/xhyve/syos/initramfs_latest.gz,console=ttyS0 quiet root=/dev/ram0 singularity_action=%s singularity_arguments=\"%s\"", singAction, cliExtra)
+	//fmt.Println("kexecArgs=", kexecArgs)
 	//defArgs := []string{"-A", "-m", "6G", "-c", "2", "-s", "0:0,hostbridge", "-s", "2:0,ahci-hd,/Users/carlmadison/xhyve/syos/lolcow.sif", "-s", "31,lpc", "-l", "com1,stdio", "-f", "kexec,/Users/carlmadison/xhyve/syos/bzImage_new,/Users/carlmadison/xhyve/syos/initramfs_new.gz,console=ttyS0 quiet root=/dev/ram0"}
+
 	defArgs := []string{"-A", "-m", "6G", "-c", "2", "-s", "0:0,hostbridge", "-s", hdString, "-s", "31,lpc", "-l", "com1,stdio", "-f", kexecArgs}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
