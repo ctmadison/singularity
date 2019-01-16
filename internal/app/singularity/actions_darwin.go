@@ -1,16 +1,20 @@
-// Copyright (c) 2018, Sylabs Inc. All rights reserved.
+// Copyright (c) 2019, Sylabs Inc. All rights reserved.
 // This software is licensed under a 3-clause BSD license. Please consult the
 // LICENSE.md file distributed with the sources of this project regarding your
 // rights to use or distribute this software.
 
-// +build singularity_runtime
+// +build darwin
 
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -64,6 +68,7 @@ func init() {
 		cmd.Flags().AddFlag(actionFlags.Lookup("network-args"))
 		cmd.Flags().AddFlag(actionFlags.Lookup("dns"))
 		cmd.Flags().AddFlag(actionFlags.Lookup("nv"))
+		cmd.Flags().AddFlag(actionFlags.Lookup("vm"))
 		cmd.Flags().AddFlag(actionFlags.Lookup("overlay"))
 		cmd.Flags().AddFlag(actionFlags.Lookup("pid"))
 		cmd.Flags().AddFlag(actionFlags.Lookup("uts"))
@@ -230,7 +235,7 @@ var ExecCmd = &cobra.Command{
 	DisableFlagsInUseLine: true,
 	TraverseChildren:      true,
 	Args:                  cobra.MinimumNArgs(2),
-	PreRun:                replaceURIWithImage,
+	//	PreRun:                replaceURIWithImage,
 	Run: func(cmd *cobra.Command, args []string) {
 		a := append([]string{"/.singularity.d/actions/exec"}, args[1:]...)
 		execStarter(cmd, args[0], a, "")
@@ -247,7 +252,7 @@ var ShellCmd = &cobra.Command{
 	DisableFlagsInUseLine: true,
 	TraverseChildren:      true,
 	Args:                  cobra.MinimumNArgs(1),
-	PreRun:                replaceURIWithImage,
+	//	PreRun:                replaceURIWithImage,
 	Run: func(cmd *cobra.Command, args []string) {
 		a := []string{"/.singularity.d/actions/shell"}
 		execStarter(cmd, args[0], a, "")
@@ -264,7 +269,7 @@ var RunCmd = &cobra.Command{
 	DisableFlagsInUseLine: true,
 	TraverseChildren:      true,
 	Args:                  cobra.MinimumNArgs(1),
-	PreRun:                replaceURIWithImage,
+	//	PreRun:                replaceURIWithImage,
 	Run: func(cmd *cobra.Command, args []string) {
 		a := append([]string{"/.singularity.d/actions/run"}, args[1:]...)
 		execStarter(cmd, args[0], a, "")
@@ -281,7 +286,7 @@ var TestCmd = &cobra.Command{
 	DisableFlagsInUseLine: true,
 	TraverseChildren:      true,
 	Args:                  cobra.MinimumNArgs(1),
-	PreRun:                replaceURIWithImage,
+	//	PreRun:                replaceURIWithImage,
 	Run: func(cmd *cobra.Command, args []string) {
 		a := append([]string{"/.singularity.d/test"}, args[1:]...)
 		execStarter(cmd, args[0], a, "")
@@ -378,7 +383,7 @@ func execStarter(cobraCmd *cobra.Command, image string, args []string, name stri
 		engineConfig.SetImage(abspath)
 	}
 
-	if !NoNvidia && (Nvidia || engineConfig.File.AlwaysUseNv) {
+	if !NoNvidia && (Nvidia) { //|| engineConfig.File.AlwaysUseNv) {
 		userPath := os.Getenv("USER_PATH")
 
 		if engineConfig.File.AlwaysUseNv {
@@ -532,6 +537,7 @@ func execStarter(cobraCmd *cobra.Command, image string, args []string, name stri
 		generator.SetProcessArgs(args)
 		procname = "Singularity runtime parent"
 	}
+	fmt.Println(procname)
 
 	if NetNamespace {
 		generator.AddOrReplaceLinuxNamespace("network", "")
@@ -603,49 +609,132 @@ func execStarter(cobraCmd *cobra.Command, image string, args []string, name stri
 		sylog.Fatalf("CLI Failed to marshal CommonEngineConfig: %s\n", err)
 	}
 
-	if engineConfig.GetInstance() {
-		stdout, stderr, err := instance.SetLogFile(name, int(uid))
-		if err != nil {
-			sylog.Fatalf("failed to create instance log files: %s", err)
+	if Vm {
+		// SIF image we are running
+		sifImage := engineConfig.GetImage()
+
+		cliExtra := ""
+		singAction := ""
+
+		imgPath := strings.Split(sifImage, ":")
+		isInternal := false
+		if strings.HasPrefix("internal", filepath.Base(imgPath[0])) {
+			cliExtra = "syos"
+			isInternal = true
+		} else {
+			// Get our "action" (run, exec, shell) based on the action script being called
+			singAction = filepath.Base(args[0])
+			cliExtra = strings.Join(args[1:], " ")
 		}
 
-		start, err := stderr.Seek(0, os.SEEK_END)
-		if err != nil {
-			sylog.Warningf("failed to get standard error stream offset: %s", err)
+		//defArgs := []string{"-cpu", "host", "-enable-kvm", "-device", "virtio-rng-pci", "-realtime", "mlock=on", "-display", "vnc", "-hda", os.Args[3], "-serial", "stdio", "-kernel", "/home/jstover/syos/bzImage", "-initrd", "/home/jstover/syos/initramfs.gz", "-m", "4096", os.Args[4], os.Args[5]}
+		//defArgs := []string{""}
+
+		if cliExtra == "syos" && isInternal {
+			//fmt.Println("defargs - without -hda")
+			//defArgs = []string{"-cpu", "host", "-enable-kvm", "-device", "virtio-rng-pci", "-display", "none", "-realtime", "mlock=on", "-serial", "stdio", "-kernel", buildcfg.LIBEXECDIR + "/singularity/vm/syos-kernel-amd64", "-initrd", buildcfg.LIBEXECDIR + "/singularity/vm/initramfs_amd64.gz", "-m", "4096", "-append", appendArgs}
+		} else {
+			//fmt.Println("defargs - with -hda")
+			//defArgs = []string{"-cpu", "host", "-enable-kvm", "-device", "virtio-rng-pci", "-display", "none", "-realtime", "mlock=on", "-hda", sifImage, "-serial", "stdio", "-kernel", buildcfg.LIBEXECDIR + "/singularity/vm/syos-kernel-amd64", "-initrd", buildcfg.LIBEXECDIR + "/singularity/vm/initramfs_amd64.gz", "-m", "4096", "-append", appendArgs}
 		}
 
-		cmd, err := exec.PipeCommand(starter, []string{procname}, Env, configData)
-		cmd.Stdout = stdout
-		cmd.Stderr = stderr
+		if err := doVm(sifImage, singAction, cliExtra); err != nil {
+			sylog.Errorf("VM instance failed: %s", err)
+			os.Exit(2)
+		}
+	} else {
+		if engineConfig.GetInstance() {
+			stdout, stderr, err := instance.SetLogFile(name, int(uid))
+			if err != nil {
+				sylog.Fatalf("failed to create instance log files: %s", err)
+			}
 
-		cmdErr := cmd.Run()
-
-		if sylog.GetLevel() != 0 {
-			// starter can exit a bit before all errors has been reported
-			// by instance process, wait a bit to catch all errors
-			time.Sleep(100 * time.Millisecond)
-
-			end, err := stderr.Seek(0, os.SEEK_END)
+			start, err := stderr.Seek(0, os.SEEK_END)
 			if err != nil {
 				sylog.Warningf("failed to get standard error stream offset: %s", err)
 			}
-			if end-start > 0 {
-				output := make([]byte, end-start)
-				stderr.ReadAt(output, start)
-				fmt.Println(string(output))
+
+			cmd, err := exec.PipeCommand(starter, []string{procname}, Env, configData)
+			cmd.Stdout = stdout
+			cmd.Stderr = stderr
+
+			cmdErr := cmd.Run()
+
+			if sylog.GetLevel() != 0 {
+				// starter can exit a bit before all errors has been reported
+				// by instance process, wait a bit to catch all errors
+				time.Sleep(100 * time.Millisecond)
+
+				end, err := stderr.Seek(0, os.SEEK_END)
+				if err != nil {
+					sylog.Warningf("failed to get standard error stream offset: %s", err)
+				}
+				if end-start > 0 {
+					output := make([]byte, end-start)
+					stderr.ReadAt(output, start)
+					fmt.Println(string(output))
+				}
+			}
+
+			if cmdErr != nil {
+				sylog.Fatalf("failed to start instance: %s", cmdErr)
+			} else {
+				sylog.Verbosef("you will find instance output here: %s", stdout.Name())
+				sylog.Verbosef("you will find instance error here: %s", stderr.Name())
+				sylog.Infof("instance started successfully")
+			}
+		} else {
+			if err := exec.Pipe(starter, []string{procname}, Env, configData); err != nil {
+				sylog.Fatalf("%s", err)
 			}
 		}
-
-		if cmdErr != nil {
-			sylog.Fatalf("failed to start instance: %s", cmdErr)
-		} else {
-			sylog.Verbosef("you will find instance output here: %s", stdout.Name())
-			sylog.Verbosef("you will find instance error here: %s", stderr.Name())
-			sylog.Infof("instance started successfully")
-		}
-	} else {
-		if err := exec.Pipe(starter, []string{procname}, Env, configData); err != nil {
-			sylog.Fatalf("%s", err)
-		}
 	}
+}
+
+func doVm(sifImage, singAction, cliExtra string) error {
+
+	hdString := fmt.Sprintf("2:0,ahci-hd,%s", sifImage)
+
+	kexecArgs := fmt.Sprintf("kexec,/Users/carlmadison/xhyve/syos/bzImage_latest,/Users/carlmadison/xhyve/syos/initramfs_latest.gz,console=ttyS0 quiet root=/dev/ram0 singularity_action=%s singularity_arguments=\"%s\"", singAction, cliExtra)
+	//fmt.Println("kexecArgs=", kexecArgs)
+
+	//defArgs := []string{"-A", "-m", "6G", "-c", "2", "-s", "0:0,hostbridge", "-s", "2:0,ahci-hd,/Users/carlmadison/xhyve/syos/lolcow.sif", "-s", "31,lpc", "-l", "com1,stdio", "-f", "kexec,/Users/carlmadison/xhyve/syos/bzImage_new,/Users/carlmadison/xhyve/syos/initramfs_new.gz,console=ttyS0 quiet root=/dev/ram0"}
+	defArgs := []string{"-A", "-m", "6G", "-c", "2", "-s", "0:0,hostbridge", "-s", hdString, "-s", "31,lpc", "-l", "com1,stdio", "-f", kexecArgs}
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+
+	pgmExec, lookErr := osexec.LookPath("/Users/carlmadison/xhyve/build/xhyve")
+	if lookErr != nil {
+		panic(lookErr)
+	}
+
+	cmd := osexec.Command(pgmExec, defArgs...)
+	cmd.Env = os.Environ()
+	cmd.Stdin = os.Stdin
+
+	stdoutIn, _ := cmd.StdoutPipe()
+	stderrIn, _ := cmd.StderrPipe()
+
+	var errStdout, errStderr error
+	stdout := io.MultiWriter(os.Stdout, &stdoutBuf)
+	stderr := io.MultiWriter(os.Stderr, &stderrBuf)
+
+	cmdErr := cmd.Run()
+	if cmdErr != nil {
+		//log.Infof("cmd.Start() failed with '%s'\n", cmdErr)
+	}
+
+	go func() {
+		_, errStdout = io.Copy(stdout, stdoutIn)
+	}()
+
+	go func() {
+		_, errStderr = io.Copy(stderr, stderrIn)
+	}()
+
+	if errStdout != nil || errStderr != nil {
+		log.Fatal("failed to capture stdout or stderr\n")
+	}
+
+	return nil
 }
