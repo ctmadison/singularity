@@ -695,8 +695,12 @@ func execStarter(cobraCmd *cobra.Command, image string, args []string, name stri
 	}
 }
 
-func doVm(cpath string) error {
-	defargs := []string{"-cpu", "host", "-enable-kvm", "-device", "virtio-rng-pci", "-realtime", "mlock=on", "-display", "none", "-hda", os.Args[3], "-serial", "stdio", "-kernel", "/home/cmadison/syos/bzImage", "-initrd", "/home/cmadison/syos/initramfs.gz", "-m", "8192", os.Args[4], os.Args[5]}
+func doVm(sifImage, singAction, cliExtra string) error {
+
+	hdString := fmt.Sprintf("-hda", sifImage)
+	appendArgs := fmt.Sprintf("root=/dev/ram0 console=ttyS0 quiet singularity_action=%s singularity_arguments=\"%s\"", singAction, cliExtra)
+
+	defargs := []string{"-cpu", "host", "-enable-kvm", "-device", "virtio-rng-pci", "-display", "none", "-realtime", "mlock=on", hdString, "-serial", "stdio", "-kernel", buildcfg.LIBEXECDIR + "/singularity/vm/syos-kernel-amd64", "-initrd", buildcfg.LIBEXECDIR + "/singularity/vm/initramfs_amd64.gz", "-m", "4096", "-append", appendArgs}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 
