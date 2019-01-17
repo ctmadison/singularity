@@ -11,7 +11,6 @@ import (
 	"runtime"
 
 	"github.com/spf13/pflag"
-	"github.com/sylabs/singularity/internal/pkg/sylog"
 	"github.com/sylabs/singularity/internal/pkg/util/user"
 )
 
@@ -200,7 +199,7 @@ func initBoolVars() {
 	// --vm
 	if GOOS == "darwin" {
 		actionFlags.BoolVar(&Vm, "vm", true, "enable VM support")
-		sylog.Infof("VM support auto-enabled, OS=%s", GOOS)
+		//sylog.Infof("VM support auto-enabled, OS=%s", GOOS)
 	} else {
 		actionFlags.BoolVar(&Vm, "vm", false, "enable VM support")
 	}
