@@ -7,18 +7,14 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	osexec "os/exec"
-	"path/filepath"
 	"runtime"
-	"strconv"
-	"strings"
-	"syscall"
-	"time"
+
+	"github.com/sylabs/singularity/internal/pkg/buildcfg"
 )
 
 func startVm(sifImage, singAction, cliExtra string, isInternal bool) error {
