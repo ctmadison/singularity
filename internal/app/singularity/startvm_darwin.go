@@ -35,7 +35,7 @@ func startVm(sifImage, singAction, cliExtra string, isInternal bool) error {
 		defArgs = []string{"-A", "-m", "6G", "-c", "2", "-s", "0:0,hostbridge", "-s", hdString, "-s", "31,lpc", "-l", "com1,stdio", "-f", kexecArgs}
 	}
 
-	pgmExec, lookErr := osexec.LookPath("/Users/carlmadison/xhyve/build/xhyve")
+	pgmExec, lookErr := osexec.LookPath("/usr/local/libexec/xhyve/build/xhyve")
 	if lookErr != nil {
 		panic(lookErr)
 	}
