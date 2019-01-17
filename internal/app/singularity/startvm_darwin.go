@@ -24,7 +24,7 @@ func startVm(sifImage, singAction, cliExtra string, isInternal bool) error {
 
 	bzImage := fmt.Sprintf(buildcfg.LIBEXECDIR+"%s"+runtime.GOARCH, "/singularity/vm/syos-kernel-")
 	initramfs := fmt.Sprintf(buildcfg.LIBEXECDIR+"%s"+runtime.GOARCH+".gz", "/singularity/vm/initramfs_")
-	kexecArgs := fmt.Sprintf("kexec,%s,%s,console=ttyS0 quiet root=/dev/ram0 singularity_action=%s singularity_arguments=\"%s\"", bzImage, initramfs, singAction, cliExtra)
+	kexecArgs := fmt.Sprintf("kexec,%s,%s,console=ttyS0 quiet root=/dev/ram0 loglevel=0 singularity_action=%s singularity_arguments=\"%s\"", bzImage, initramfs, singAction, cliExtra)
 
 	defArgs := []string{""}
 	if cliExtra == "syos" && isInternal {
