@@ -34,6 +34,12 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
+// defaultCNIConfPath is the default directory to CNI network configuration files
+var defaultCNIConfPath = filepath.Join(buildcfg.SYSCONFDIR, "singularity", "network")
+
+// defaultCNIPluginPath is the default directory to CNI plugins executables
+var defaultCNIPluginPath = filepath.Join(buildcfg.LIBEXECDIR, "singularity", "cni")
+
 type container struct {
 	engine           *EngineOperations
 	rpcOps           *client.RPC
@@ -172,9 +178,17 @@ func create(engine *EngineOperations, rpcOps *client.RPC, pid int) error {
 			nspath := fmt.Sprintf("/proc/%d/fd/%d", os.Getpid(), f.Fd())
 			networks := strings.Split(engine.EngineConfig.GetNetwork(), ",")
 
-			cniPath := &network.CNIPath{
-				Conf:   engine.EngineConfig.File.CniConfPath,
-				Plugin: engine.EngineConfig.File.CniPluginPath,
+			cniPath := &network.CNIPath{}
+
+			if engine.EngineConfig.File.CniConfPath != "" {
+				cniPath.Conf = engine.EngineConfig.File.CniConfPath
+			} else {
+				cniPath.Conf = defaultCNIConfPath
+			}
+			if engine.EngineConfig.File.CniPluginPath != "" {
+				cniPath.Plugin = engine.EngineConfig.File.CniPluginPath
+			} else {
+				cniPath.Plugin = defaultCNIPluginPath
 			}
 
 			setup, err := network.NewSetup(networks, strconv.Itoa(pid), nspath, cniPath)
@@ -185,6 +199,8 @@ func create(engine *EngineOperations, rpcOps *client.RPC, pid int) error {
 			if err := setup.SetArgs(netargs); err != nil {
 				return fmt.Errorf("%s", err)
 			}
+
+			setup.SetEnvPath("/bin:/sbin:/usr/bin:/usr/sbin")
 
 			if err := setup.AddNetworks(); err != nil {
 				return fmt.Errorf("%s", err)
@@ -354,7 +370,7 @@ func (c *container) setupOverlayLayout(system *mount.System, sessionPath string)
 	}
 
 	c.sessionLayerType = "overlay"
-	return system.RunAfterTag(mount.LayerTag, c.setSlaveMount)
+	return system.RunAfterTag(mount.LayerTag, c.setPropagationMount)
 }
 
 // setupUnderlayLayout sets up the session with underlay "filesystem"
@@ -365,7 +381,7 @@ func (c *container) setupUnderlayLayout(system *mount.System, sessionPath string
 	}
 
 	c.sessionLayerType = "underlay"
-	return system.RunAfterTag(mount.LayerTag, c.setSlaveMount)
+	return system.RunAfterTag(mount.LayerTag, c.setPropagationMount)
 }
 
 // setupDefaultLayout sets up the session without overlay or underlay
@@ -376,7 +392,7 @@ func (c *container) setupDefaultLayout(system *mount.System, sessionPath string)
 	}
 
 	c.sessionLayerType = "none"
-	return system.RunAfterTag(mount.RootfsTag, c.setSlaveMount)
+	return system.RunAfterTag(mount.RootfsTag, c.setPropagationMount)
 }
 
 // isLayerEnabled returns whether or not overlay or underlay system
@@ -416,8 +432,8 @@ func (c *container) mount(point *mount.Point) error {
 	return nil
 }
 
-func (c *container) setSlaveMount(system *mount.System) error {
-	pflags := uintptr(0)
+func (c *container) setPropagationMount(system *mount.System) error {
+	//pflags := uintptr(syscall.MS_REC)
 
 	if c.engine.EngineConfig.File.MountSlave {
 		sylog.Debugf("Set RPC mount propagation flag to SLAVE")
@@ -427,9 +443,9 @@ func (c *container) setSlaveMount(system *mount.System) error {
 		//pflags |= syscall.MS_PRIVATE
 	}
 
-	if _, err := c.rpcOps.Mount("", "/", "", pflags, ""); err != nil {
-		return err
-	}
+	//if _, err := c.rpcOps.Mount("", "/", "", pflags, ""); err != nil {
+	//	return err
+	//}
 	return nil
 }
 
@@ -473,13 +489,10 @@ func (c *container) mountGeneric(mnt *mount.Point) (err error) {
 	flags, opts := mount.ConvertOptions(mnt.Options)
 	optsString := strings.Join(opts, ",")
 	sessionPath := c.session.Path()
-	remount := false
+	remount := mount.HasRemountFlag(flags)
+	propagation := mount.HasPropagationFlag(flags)
 	source := mnt.Source
 	dest := ""
-
-	//if flags&syscall.MS_REMOUNT != 0 {
-	//	remount = true
-	//}
 
 	//if flags&syscall.MS_BIND != 0 && !remount {
 	//	if _, err := os.Stat(source); os.IsNotExist(err) {
@@ -506,7 +519,7 @@ func (c *container) mountGeneric(mnt *mount.Point) (err error) {
 		}
 	}
 
-	if remount {
+	if remount || propagation {
 		for _, skipped := range c.skippedMount {
 			if skipped == mnt.Destination {
 				return nil
@@ -526,7 +539,7 @@ func (c *container) mountGeneric(mnt *mount.Point) (err error) {
 		}
 		sylog.Debugf("Mounting %s to %s\n", source, dest)
 
-		// in scontainer stage 1 we changed current working directory to
+		// in stage 1 we changed current working directory to
 		// sandbox image directory, just pass "." as source argument to
 		// be sure RPC mount the right sandbox image
 		//if dest == c.session.RootFsPath() && flags&syscall.MS_BIND != 0 {
@@ -688,7 +701,23 @@ func (c *container) addRootfsMount(system *mount.System) error {
 	}
 
 	sylog.Debugf("Mounting block [%v] image: %v\n", mountType, rootfs)
-	return system.Points.AddImage(mount.RootfsTag, imageObject.Source, c.session.RootFsPath(), mountType, flags, imageObject.Offset, imageObject.Size)
+	if err := system.Points.AddImage(
+		mount.RootfsTag,
+		imageObject.Source,
+		c.session.RootFsPath(),
+		mountType,
+		flags,
+		imageObject.Offset,
+		imageObject.Size,
+	); err != nil {
+		return err
+	}
+
+	//if imageObject.Writable {
+	//	return system.Points.AddPropagation(mount.DevTag, c.session.RootFsPath(), syscall.MS_UNBINDABLE)
+	//}
+
+	return nil
 }
 
 func (c *container) overlayUpperWork(system *mount.System) error {
@@ -822,6 +851,11 @@ func (c *container) addOverlayMount(system *mount.System) error {
 			return fmt.Errorf("unknown image format")
 		}
 
+		//err = system.Points.AddPropagation(mount.DevTag, dst, syscall.MS_UNBINDABLE)
+		//if err != nil {
+		//	return err
+		//}
+
 		if imageObject.Writable && !hasUpper {
 			upper := filepath.Join(dst, "upper")
 			work := filepath.Join(dst, "work")
@@ -843,6 +877,7 @@ func (c *container) addOverlayMount(system *mount.System) error {
 		}
 	}
 
+	//return system.Points.AddPropagation(mount.DevTag, c.session.FinalPath(), syscall.MS_UNBINDABLE)
 	return nil
 }
 
@@ -1004,9 +1039,9 @@ func (c *container) addDevMount(system *mount.System) error {
 			sylog.Debugf("Mounting devpts for staged /dev/pts")
 			//devptsPath, _ := c.session.GetPath("/dev/pts")
 			//err = system.Points.AddFS(mount.DevTag, devptsPath, "devpts", syscall.MS_NOSUID|syscall.MS_NOEXEC, options)
-			if err != nil {
-				return fmt.Errorf("failed to add devpts filesystem: %s", err)
-			}
+			//if err != nil {
+			//	return fmt.Errorf("failed to add devpts filesystem: %s", err)
+			//}
 			// add additional PTY allocation symlink
 			if err := c.session.AddSymlink("/dev/ptmx", "/dev/pts/ptmx"); err != nil {
 				return fmt.Errorf("failed to create /dev/ptmx symlink: %s", err)
