@@ -153,10 +153,10 @@ func create(engine *EngineOperations, rpcOps *client.RPC, pid int) error {
 	}
 
 	sylog.Debugf("Chroot into %s\n", c.session.FinalPath())
-	_, err = c.rpcOps.Chroot(c.session.FinalPath(), true)
+	_, err = c.rpcOps.Chroot(c.session.FinalPath(), "pivot")
 	if err != nil {
 		sylog.Debugf("Fallback to move/chroot")
-		_, err = c.rpcOps.Chroot(c.session.FinalPath(), false)
+		_, err = c.rpcOps.Chroot(c.session.FinalPath(), "move")
 		if err != nil {
 			return fmt.Errorf("chroot failed: %s", err)
 		}
@@ -200,7 +200,8 @@ func create(engine *EngineOperations, rpcOps *client.RPC, pid int) error {
 		path := engine.EngineConfig.GetCgroupsPath()
 		if path != "" {
 			name := strconv.Itoa(pid)
-			manager := &cgroups.Manager{Pid: pid, Name: name}
+			path := filepath.Join("/singularity", name)
+			manager := &cgroups.Manager{Pid: pid, Path: path}
 			if err := manager.ApplyFromFile(path); err != nil {
 				return fmt.Errorf("Failed to apply cgroups ressources restriction: %s", err)
 			}
@@ -573,7 +574,8 @@ func (c *container) mountImage(mnt *mount.Point) error {
 		Flags:     loopFlags,
 	}
 
-	number, err := c.rpcOps.LoopDevice(mnt.Source, attachFlag, *info, maxDevices)
+	shared := c.engine.EngineConfig.File.SharedLoopDevices
+	number, err := c.rpcOps.LoopDevice(mnt.Source, attachFlag, *info, maxDevices, shared)
 	if err != nil {
 		return fmt.Errorf("failed to find loop device: %s", err)
 	}
