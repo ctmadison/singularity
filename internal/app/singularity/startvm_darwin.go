@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	osexec "os/exec"
@@ -17,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/sylabs/singularity/internal/pkg/buildcfg"
+	"github.com/sylabs/singularity/internal/pkg/sylog"
 )
 
 func startVm(sifImage, singAction, cliExtra string, isInternal bool) error {
@@ -41,13 +41,11 @@ func startVm(sifImage, singAction, cliExtra string, isInternal bool) error {
 
 	pgmExec, lookErr := osexec.LookPath("/usr/local/libexec/xhyve/build/xhyve")
 	if lookErr != nil {
-		log.Printf("/usr/local/libexec/xhyve/build/xhyve binary not found - exiting")
-		return nil
+		sylog.Fatalf("Failed to find xhyve executable at /usr/local/libexec/xhyve/build/xhyve")
 	}
 
 	if _, err := os.Stat(sifImage); os.IsNotExist(err) {
-		log.Printf("%s not found - exiting", sifImage)
-		return nil
+		sylog.Fatalf("Failed to determine image absolute path for %s: %s", sifImage, err)
 	}
 
 	cmd := osexec.Command(pgmExec, defArgs...)
@@ -61,6 +59,8 @@ func startVm(sifImage, singAction, cliExtra string, isInternal bool) error {
 	stdout := io.MultiWriter(os.Stdout, &stdoutBuf)
 	stderr := io.MultiWriter(os.Stderr, &stderrBuf)
 
+	exitCode = defaultFailedCode
+
 	cmdErr := cmd.Run()
 	if cmdErr != nil {
 		// try to get the exit code
@@ -73,7 +73,7 @@ func startVm(sifImage, singAction, cliExtra string, isInternal bool) error {
 		ws := cmd.ProcessState.Sys().(syscall.WaitStatus)
 		exitCode = ws.ExitStatus()
 	}
-	log.Printf("command result, stdout: %v, stderr: %v, exitCode: %v", errStdout, errStderr, exitCode)
+	sylog.Debugf("command result, stdout: %v, stderr: %v, exitCode: %v", errStdout, errStderr, exitCode)
 
 	go func() {
 		_, errStdout = io.Copy(stdout, stdoutIn)
@@ -84,7 +84,7 @@ func startVm(sifImage, singAction, cliExtra string, isInternal bool) error {
 	}()
 
 	if errStdout != nil || errStderr != nil {
-		log.Fatal("failed to capture stdout or stderr\n")
+		sylog.Fatalf("failed to capture stdout or stderr\n")
 	}
 
 	return nil
